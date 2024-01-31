@@ -20,6 +20,7 @@ import "./Enumerable.sol";
 contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, ReentrancyGuard, Enumerable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
+    
     struct PoolInfo {
         uint256 allocPoint;
         // V3 pool address
