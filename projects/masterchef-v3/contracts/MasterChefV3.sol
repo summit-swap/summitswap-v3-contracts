@@ -65,11 +65,8 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     /// @notice v3PoolAddressPid[v3PoolAddress] => pid
     mapping(address => uint256) public v3PoolAddressPid;
 
-    /// @notice Address of CAKE contract.
+    /// @notice Address of SUMMIT contract.
     IERC20 public immutable CAKE;
-
-    /// @notice Address of EVEREST contract (game token).
-    IERC20 public immutable EVEREST;
 
     /// @notice Address of WETH contract.
     address public immutable WETH;
@@ -97,7 +94,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     uint256 public latestPeriodNumber;
     uint256 public latestPeriodStartTime;
     uint256 public latestPeriodEndTime;
-    uint256 public latestPeriodRewardPerSecond;
+    uint256 public latestPeriodCakePerSecond;
 
     /// @notice Address of the operator.
     address public operatorAddress;
@@ -115,7 +112,6 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
 
     /// @notice Record the cake amount belong to MasterChefV3.
     uint256 public cakeAmountBelongToMC;
-    uint256 public everestAmountBelongToMC;
 
     error ZeroAddress();
     error NotOwnerOrOperator();
@@ -201,11 +197,10 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
 
     /// @param _CAKE The CAKE token contract address.
     /// @param _nonfungiblePositionManager the NFT position manager contract address.
-    constructor(IERC20 _CAKE, INonfungiblePositionManager _nonfungiblePositionManager, address _WETH, IERC20 _EVEREST) {
+    constructor(IERC20 _CAKE, INonfungiblePositionManager _nonfungiblePositionManager, address _WETH) {
         CAKE = _CAKE;
         nonfungiblePositionManager = _nonfungiblePositionManager;
         WETH = _WETH;
-        EVEREST = _EVEREST;
     }
 
     /// @notice Returns the cake per second , period end time.
@@ -214,7 +209,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     /// @return endTime Period end time.
     function getLatestPeriodInfoByPid(uint256 _pid) public view returns (uint256 cakePerSecond, uint256 endTime) {
         if (totalAllocPoint > 0) {
-            cakePerSecond = (latestPeriodRewardPerSecond * poolInfo[_pid].allocPoint) / totalAllocPoint;
+            cakePerSecond = (latestPeriodCakePerSecond * poolInfo[_pid].allocPoint) / totalAllocPoint;
         }
         endTime = latestPeriodEndTime;
     }
@@ -226,7 +221,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     function getLatestPeriodInfo(address _v3Pool) public view returns (uint256 cakePerSecond, uint256 endTime) {
         if (totalAllocPoint > 0) {
             cakePerSecond =
-                (latestPeriodRewardPerSecond * poolInfo[v3PoolAddressPid[_v3Pool]].allocPoint) /
+                (latestPeriodCakePerSecond * poolInfo[v3PoolAddressPid[_v3Pool]].allocPoint) /
                 totalAllocPoint;
         }
         endTime = latestPeriodEndTime;
@@ -236,7 +231,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     /// @dev The pending cake amount is based on the last state in LMPool. The actual amount will happen whenever liquidity changes or harvest.
     /// @param _tokenId Token Id of NFT.
     /// @return reward Pending reward.
-    function pendingReward(uint256 _tokenId) external view returns (uint256 reward) {
+    function pendingCake(uint256 _tokenId) external view returns (uint256 reward) {
         UserPositionInfo memory positionInfo = userPositionInfos[_tokenId];
         if (positionInfo.pid != 0) {
             PoolInfo memory pool = poolInfo[positionInfo.pid];
@@ -431,8 +426,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
         if (reward > 0) {
             if (_to != address(0)) {
                 positionInfo.reward = 0;
-                _splitRewards(_to, reward, userFarmingOasis[positionInfo.user]);
-                // _safeTransferCAKE(_to, reward); REMOVED IN FAVOR OF REWARD SPLITTING
+                _routeReward(_to, reward, userFarmingOasis[positionInfo.user]);
                 emit Harvest(msg.sender, _to, positionInfo.pid, _tokenId, reward);
             } else {
                 positionInfo.reward = reward;
@@ -665,19 +659,6 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
                 }
             }
         }
-        // Need to reduce everestAmountBelongToMC.
-        if (_token == address(EVEREST)) {
-            unchecked {
-                // In fact balance should always be greater than or equal to everestAmountBelongToMC, but in order to avoid any unknown issue, we added this check.
-                if (balance >= everestAmountBelongToMC) {
-                    balance -= everestAmountBelongToMC;
-                } else {
-                    // This should never happen.
-                    everestAmountBelongToMC = balance;
-                    balance = 0;
-                }
-            }
-        }
         if (balance > 0) {
             if (_token == WETH) {
                 IWETH(WETH).withdraw(balance);
@@ -716,21 +697,8 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
                 if (balanceToken >= cakeAmountBelongToMC) {
                     balanceToken -= cakeAmountBelongToMC;
                 } else {
-                    // This should never happen.
+                    // This should never happend.
                     cakeAmountBelongToMC = balanceToken;
-                    balanceToken = 0;
-                }
-            }
-        }
-        // Need to reduce everestAmountBelongToMC.
-        if (token == address(EVEREST)) {
-            unchecked {
-                // In fact balance should always be greater than or equal to everestAmountBelongToMC, but in order to avoid any unknown issue, we added this check.
-                if (balanceToken >= everestAmountBelongToMC) {
-                    balanceToken -= everestAmountBelongToMC;
-                } else {
-                    // This should never happen.
-                    everestAmountBelongToMC = balanceToken;
                     balanceToken = 0;
                 }
             }
@@ -764,14 +732,11 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     /// @param _duration The period duration.
     /// @param _withUpdate Whether call "massUpdatePools" operation.
     function upkeep(uint256 _amount, uint256 _duration, bool _withUpdate) external onlyReceiver {
-        // Transfer SUMMIT token from receiver.
-        // Receiver has EVEREST mint ability, and should mint and transfer same amount of EVEREST as SUMMIT
+        // Transfer cake token from receiver.
         CAKE.safeTransferFrom(receiver, address(this), _amount);
-        EVEREST.safeTransferFrom(receiver, address(this), _amount);
         // Update cakeAmountBelongToMC
         unchecked {
             cakeAmountBelongToMC += _amount;
-            everestAmountBelongToMC += _amount;
         }
 
         if (_withUpdate) massUpdatePools();
@@ -781,21 +746,21 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
         if (_duration >= MIN_DURATION && _duration <= MAX_DURATION) duration = _duration;
         uint256 currentTime = block.timestamp;
         uint256 endTime = currentTime + duration;
-        uint256 rewardPerSecond;
-        uint256 rewardAmount = _amount;
+        uint256 cakePerSecond;
+        uint256 cakeAmount = _amount;
         if (latestPeriodEndTime > currentTime) {
-            uint256 remainingReward = ((latestPeriodEndTime - currentTime) * latestPeriodRewardPerSecond) / PRECISION;
-            emit UpdateUpkeepPeriod(latestPeriodNumber, latestPeriodEndTime, currentTime, remainingReward);
-            rewardAmount += remainingReward;
+            uint256 remainingCake = ((latestPeriodEndTime - currentTime) * latestPeriodCakePerSecond) / PRECISION;
+            emit UpdateUpkeepPeriod(latestPeriodNumber, latestPeriodEndTime, currentTime, remainingCake);
+            cakeAmount += remainingCake;
         }
-        rewardPerSecond = (rewardAmount * PRECISION) / duration;
+        cakePerSecond = (cakeAmount * PRECISION) / duration;
         unchecked {
             latestPeriodNumber++;
             latestPeriodStartTime = currentTime + 1;
             latestPeriodEndTime = endTime;
-            latestPeriodRewardPerSecond = rewardPerSecond;
+            latestPeriodCakePerSecond = cakePerSecond;
         }
-        emit NewUpkeepPeriod(latestPeriodNumber, currentTime + 1, endTime, rewardPerSecond, rewardAmount);
+        emit NewUpkeepPeriod(latestPeriodNumber, currentTime + 1, endTime, cakePerSecond, cakeAmount);
     }
 
     /// @notice Update cake reward for all the liquidity mining pool.
@@ -853,7 +818,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     /// @notice Update the oasis tax.
     /// @param _newOasisTax The new oasis tax.
     function updateOasisTax(uint256 _newOasisTax) external onlyOwner {
-        if (oasisTax < 0 || oasisTax > 3000) revert InvalidOasisTax();
+        if (oasisTax < 0 || oasisTax > 5000) revert InvalidOasisTax();
         oasisTax = _newOasisTax;
         emit UpdateOasisTax(_newOasisTax);
     }
@@ -868,30 +833,22 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
         if (!success) revert();
     }
 
-    /**
-     * @notice Split SUMMIT and EVEREST emissions, burn 20% of SUMMIT
-     * @param _to The SUMMIT or EVEREST receiver address.
-     * @param _amount Transfer amount.
-     * @param _oasis Whether to instantly receive SUMMIT with tax
-     */
-    function _splitRewards(address _to, uint256 _amount, bool _oasis) internal {
-        if (_amount > 0) {
-            if (_oasis) {
-                // SUMMIT and EVEREST should maintain parity
-                _safeTransferCAKE(_to, _amount * (10000 - oasisTax) / 10000); // Transfer SUMMIT to user
-                _safeTransferCAKE(address(0), (_amount * oasisTax) / 10000); // Burn part of SUMMIT earnings
-                _safeTransferEVEREST(address(0), _amount); // Burn EVEREST
-            } else {
-                _safeTransferCAKE(_to, _amount); // TODO: Add game fund address
-                _safeTransferEVEREST(_to, _amount);
-            }
+    /// @notice Route CAKE to either user or yield gambling.
+    /// @param _to The CAKE receiver address.
+    /// @param _amount Transfer CAKE amounts.
+    /// @param _oasis Whether to receive CAKE directly.
+    function _routeReward(address _to, uint256 _amount, bool _oasis) internal {
+        if (_oasis) {
+            _safeTransfer(_to, _amount);
+        } else {
+            _safeTransfer(_to, _amount); // TODO: Change this to yield contract address
         }
     }
 
     /// @notice Safe Transfer CAKE.
     /// @param _to The CAKE receiver address.
     /// @param _amount Transfer CAKE amounts.
-    function _safeTransferCAKE(address _to, uint256 _amount) internal {
+    function _safeTransfer(address _to, uint256 _amount) internal {
         if (_amount > 0) {
             uint256 balance = CAKE.balanceOf(address(this));
             if (balance < _amount) {
@@ -906,27 +863,6 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
                 }
             }
             CAKE.safeTransfer(_to, _amount);
-        }
-    }
-
-    /// @notice Safe Transfer EVEREST.
-    /// @param _to The EVEREST receiver address.
-    /// @param _amount Transfer EVEREST amounts.
-    function _safeTransferEVEREST(address _to, uint256 _amount) internal {
-        if (_amount > 0) {
-            uint256 balance = EVEREST.balanceOf(address(this));
-            if (balance < _amount) {
-                _amount = balance;
-            }
-            // Update everestAmountBelongToMC
-            unchecked {
-                if (everestAmountBelongToMC >= _amount) {
-                    everestAmountBelongToMC -= _amount;
-                } else {
-                    everestAmountBelongToMC = balance - _amount;
-                }
-            }
-            EVEREST.safeTransfer(_to, _amount);
         }
     }
 

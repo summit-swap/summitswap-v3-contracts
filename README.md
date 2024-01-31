@@ -14,6 +14,11 @@
   [] Burn EVEREST when entering games
 
 
+## TODO Refactored name changes
+error NotPancakeNFT() -> error NotSummitNFT()
+pendingCake -> pendingSummit
+
+
 ## Deployments
 
 1. Add Key in `.env` file. It's a private key of the account that will deploy the contracts and should be gitignored.
