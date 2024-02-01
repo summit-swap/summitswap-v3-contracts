@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./libraries/SafeCast.sol";
 import "./interfaces/IMasterChefV3.sol";
+import "./interfaces/ICartographer.sol";
 
 /*
 ---------------------------------------------------------------------------------------------
@@ -25,7 +26,7 @@ Created with love by Architect and the Summit team
 
 
 
-contract Cartographer is Ownable, ReentrancyGuard {
+contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -35,6 +36,9 @@ contract Cartographer is Ownable, ReentrancyGuard {
     // Also acts as emergency valve, allowing users to withdraw their Summit directly without playing the games
     bool public ejected = false; 
     bool public enabled = false;
+
+    /// @notice Record the SUMMIT amount belong to MasterChefV3.
+    uint256 public summitAmountBelongToCart;
 
     IMasterChefV3 public masterChefV3;
 
@@ -137,7 +141,7 @@ contract Cartographer is Ownable, ReentrancyGuard {
         if (msg.sender == owner()) {
             masterChefV3.ejectCartographer();
         }
-        
+
         ejected = true;
     }
 
@@ -210,9 +214,6 @@ contract Cartographer is Ownable, ReentrancyGuard {
     }
 
 
-    // TODO: Ejecting?
-
-
     function userEnteredSupply(address _user) public view returns (uint256) {
         UserYieldInfo memory user = userInfo[_user];
 
@@ -276,8 +277,7 @@ contract Cartographer is Ownable, ReentrancyGuard {
 
         if (winnings > 0) {
             user.lifetimeWinnings += winnings;
-            // TODO: use method used in MCV3
-            SUMMIT.safeTransfer(user.user, winnings);
+            _safeTransferSUMMIT(user.user, winnings);
         }
     }
 
@@ -314,10 +314,11 @@ contract Cartographer is Ownable, ReentrancyGuard {
     function injectFarmYield(address _user, uint256 _yield) public onlyMCV3 {
         UserYieldInfo storage user = _getUserInfo(_user);
 
+        summitAmountBelongToCart += _yield;
+
         // Safety valve if ejected and still receiving farm yield (should never happen, ejection should also eject from MCV3)
         if (ejected) {
-            // TODO: Update this to MCV3 version
-            SUMMIT.safeTransfer(user.user, _yield);
+            _safeTransferSUMMIT(user.user, _yield);
             return;
         }
 
@@ -434,8 +435,30 @@ contract Cartographer is Ownable, ReentrancyGuard {
         uint256 withdrawable = _harvestableWinnings(user);
         withdrawable += _userUnusedSupply(msg.sender);
 
-        // TODO: Update this to MCV3 version
-        SUMMIT.safeTransfer(user.user, withdrawable);
+        _safeTransferSUMMIT(user.user, withdrawable);
+    }
+
+
+
+    /// @notice Safe Transfer SUMMIT.
+    /// @param _to The SUMMIT receiver address.
+    /// @param _amount Transfer SUMMIT amounts.
+    function _safeTransferSUMMIT(address _to, uint256 _amount) internal {
+        if (_amount > 0) {
+            uint256 balance = SUMMIT.balanceOf(address(this));
+            if (balance < _amount) {
+                _amount = balance;
+            }
+            // Update summitAmountBelongToCart
+            unchecked {
+                if (summitAmountBelongToCart >= _amount) {
+                    summitAmountBelongToCart -= _amount;
+                } else {
+                    summitAmountBelongToCart = balance - _amount;
+                }
+            }
+            SUMMIT.safeTransfer(_to, _amount);
+        }
     }
 
 
