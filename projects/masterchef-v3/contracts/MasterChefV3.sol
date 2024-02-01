@@ -10,17 +10,19 @@ import "./interfaces/INonfungiblePositionManager.sol";
 import "./interfaces/INonfungiblePositionManagerStruct.sol";
 import "./interfaces/IPancakeV3Pool.sol";
 import "./interfaces/IMasterChefV2.sol";
+import "./interfaces/IMasterChefV3.sol";
 import "./interfaces/ILMPool.sol";
 import "./interfaces/ILMPoolDeployer.sol";
+import "./interfaces/ICartographer.sol";
 import "./interfaces/IFarmBooster.sol";
 import "./interfaces/IWETH.sol";
 import "./utils/Multicall.sol";
 import "./Enumerable.sol";
 
-contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, ReentrancyGuard, Enumerable {
+contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multicall, Ownable, ReentrancyGuard, Enumerable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
-    
+
     struct PoolInfo {
         uint256 allocPoint;
         // V3 pool address
@@ -80,6 +82,9 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     /// @notice Address of liquidity mining pool deployer contract.
     ILMPoolDeployer public LMPoolDeployer;
 
+    /// @notice Address of cartographer for yield gaming.
+    address public Cartographer;
+
     /// @notice Address of farm booster contract.
     IFarmBooster public FARM_BOOSTER;
 
@@ -116,6 +121,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
 
     error ZeroAddress();
     error NotOwnerOrOperator();
+    error NotOwnerOperatorOrCartographer();
     error NoBalance();
     error NotPancakeNFT();
     error InvalidNFT();
@@ -130,6 +136,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     error InconsistentAmount();
     error InsufficientAmount();
     error InvalidOasisTax();
+    error NoCartographerToEject();
 
     event AddPool(uint256 indexed pid, uint256 allocPoint, IPancakeV3Pool indexed v3Pool, ILMPool indexed lmPool);
     event SetPool(uint256 indexed pid, uint256 allocPoint);
@@ -152,6 +159,8 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     );
     event NewOperatorAddress(address operator);
     event NewLMPoolDeployerAddress(address deployer);
+    event NewCartographer(address cartographer);
+    event EjectedCartographer();
     event NewReceiver(address receiver);
     event NewPeriodDuration(uint256 periodDuration);
     event Harvest(address indexed sender, address to, uint256 indexed pid, uint256 indexed tokenId, uint256 reward);
@@ -175,6 +184,11 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
 
     modifier onlyOwnerOrOperator() {
         if (msg.sender != operatorAddress && msg.sender != owner()) revert NotOwnerOrOperator();
+        _;
+    }
+
+    modifier onlyOwnerOperatorOrCartographer() {
+        if (msg.sender != address(Cartographer) && msg.sender != operatorAddress && msg.sender != owner()) revert NotOwnerOperatorOrCartographer();
         _;
     }
 
@@ -271,6 +285,24 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
         if (address(_LMPoolDeployer) == address(0)) revert ZeroAddress();
         LMPoolDeployer = _LMPoolDeployer;
         emit NewLMPoolDeployerAddress(address(_LMPoolDeployer));
+    }
+
+    function setCartographer(address _Cartographer) external onlyOwner {
+        if (_Cartographer == address(0)) revert ZeroAddress();
+        Cartographer = _Cartographer;
+        emit NewCartographer(_Cartographer);
+    }
+
+    function ejectCartographer() external onlyOwnerOperatorOrCartographer {
+        if (Cartographer == address(0)) revert NoCartographerToEject();
+
+        // Eject cartographer if the initial ejection call came from owner or operator, NOT cartographer
+        if (msg.sender == owner() || msg.sender == operatorAddress) {
+            ICartographer(Cartographer).ejectCartographer();
+        }
+
+        Cartographer = address(0);
+        emit EjectedCartographer();
     }
 
     /// @notice Add a new pool. Can only be called by the owner.
@@ -839,17 +871,24 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
     /// @param _amount Transfer CAKE amounts.
     /// @param _oasis Whether to receive CAKE directly.
     function _routeReward(address _to, uint256 _amount, bool _oasis) internal {
+        // If no cartographer exists, harvest rewards to user without oasis tax
+        if (Cartographer == address(0)) {
+            _safeTransfer(_to, _amount);
+            return;
+        }
+
         if (_oasis) {
             _safeTransfer(_to, _amount);
         } else {
-            _safeTransfer(_to, _amount); // TODO: Change this to yield contract address
+            uint256 injectedAmount = _safeTransfer(Cartographer, _amount);
+            ICartographer(Cartographer).injectFarmYield(_to, injectedAmount);
         }
     }
 
     /// @notice Safe Transfer CAKE.
     /// @param _to The CAKE receiver address.
     /// @param _amount Transfer CAKE amounts.
-    function _safeTransfer(address _to, uint256 _amount) internal {
+    function _safeTransfer(address _to, uint256 _amount) internal returns (uint256) {
         if (_amount > 0) {
             uint256 balance = CAKE.balanceOf(address(this));
             if (balance < _amount) {
@@ -865,6 +904,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, Multicall, Ownable, 
             }
             CAKE.safeTransfer(_to, _amount);
         }
+        return _amount;
     }
 
     receive() external payable {

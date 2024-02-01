@@ -31,7 +31,10 @@ contract Cartographer is Ownable, ReentrancyGuard {
 
     IERC20 public SUMMIT;
 
-    bool public ejected = false;
+    // If problem arises, ejecting removes the cartographer from the MasterChefV3
+    // Also acts as emergency valve, allowing users to withdraw their Summit directly without playing the games
+    bool public ejected = false; 
+    bool public enabled = false;
 
     IMasterChefV3 public masterChefV3;
 
@@ -85,6 +88,8 @@ contract Cartographer is Ownable, ReentrancyGuard {
 
     event SetExpeditionDeityWinningsMult(uint256 _deityMult);
     event SetExpeditionRunwayRounds(uint256 _runwayRounds);
+
+    event EnableCartographer();
     
 
 
@@ -112,7 +117,7 @@ contract Cartographer is Ownable, ReentrancyGuard {
         public
         onlyOwner
     {
-        // TODO: revert if already enabled
+        if (enabled) revert AlreadyEnabled();
 
         // The next top of hour from the enable timestamp
         uint256 nextTwoHourTimestamp = block.timestamp + (2 hours - (block.timestamp % 2 hours));
@@ -120,8 +125,20 @@ contract Cartographer is Ownable, ReentrancyGuard {
         // The first 'round' ends when the elevation unlocks
         roundEndTimestamp = nextTwoHourTimestamp;
 
-        // TODO: Set boolean to prevent doubling
-        // TODO: Emit event
+        enabled = true;
+
+        emit EnableCartographer();
+    }
+
+    /// @notice can be ejected by owner here or from MCV3 eject function. 
+    function ejectCartographer() public onlyOwnerOrMCV3 {
+        if (ejected) revert AlreadyEjected();
+
+        if (msg.sender == owner()) {
+            masterChefV3.ejectCartographer();
+        }
+        
+        ejected = true;
     }
 
 
@@ -134,6 +151,13 @@ contract Cartographer is Ownable, ReentrancyGuard {
     error RoundLocked();
     error NoTotemSelected();
     error NotMCV3();
+    error NotOwnerOrMCV3();
+    error RolloverNotAvailable();
+    error AlreadyEnabled();
+    error NotEnabled();
+    error AlreadyEjected();
+    error NotEjected();
+    error Ejected();
 
     modifier onlyMCV3() {
         if (msg.sender != address(masterChefV3)) revert NotMCV3();
@@ -150,10 +174,28 @@ contract Cartographer is Ownable, ReentrancyGuard {
         _;
     }
 
-    function _getIsRoundLocked() internal returns (bool) {
+    function _getIsRoundLocked() internal view returns (bool) {
         if (roundEndTimestamp == 0) return false;
         return block.timestamp > (roundEndTimestamp - roundEndLockoutDuration);
     } 
+    
+    modifier rolloverAvailable() {
+        if (roundEndTimestamp == 0 || block.timestamp <= roundEndTimestamp) revert RolloverNotAvailable();
+        _;
+    }
+
+    modifier isEnabled() {
+        if (!enabled) revert NotEnabled();
+        _;
+    }
+    modifier notEjected() {
+        if (ejected) revert Ejected();
+        _;
+    }
+    modifier onlyOwnerOrMCV3() {
+        if (msg.sender != address(masterChefV3) && msg.sender != owner()) revert NotOwnerOrMCV3();
+        _;
+    }
     
 
     function _getUserInfo(address _user)
@@ -168,10 +210,43 @@ contract Cartographer is Ownable, ReentrancyGuard {
     }
 
 
-    // TODO: Pausing?
     // TODO: Ejecting?
 
 
+    function userEnteredSupply(address _user) public view returns (uint256) {
+        UserYieldInfo memory user = userInfo[_user];
+
+        // Exit if user doesn't have a position
+        if (_user != user.user) return 0;
+        
+        // Exit if users yield has been expired
+        if (user.expirationRound < roundNumber) return 0;
+
+        return user.roundSupply;
+    }
+
+    function userUnusedSupply(address _user) public view returns (uint256) {
+        return _userUnusedSupply(_user);
+    }
+    function _userUnusedSupply(address _user) internal view returns (uint256) {
+        UserYieldInfo memory user = userInfo[_user];
+
+        // Exit if user doesn't have a position
+        if (_user != user.user) return 0;
+        
+        // Exit if users yield has been expired
+        if (user.expirationRound < roundNumber) return user.inactiveYield;
+
+        return user.inactiveYield + (user.roundSupply * (user.expirationRound - roundNumber));
+    }
+    function userInactiveYield(address _user) public view returns (uint256) {
+        UserYieldInfo memory user = userInfo[_user];
+
+        // Exit if user doesn't have a position
+        if (_user != user.user) return 0;
+        
+        return user.inactiveYield;
+    }
     
     function pendingReward(address _user)
         public view returns (uint256)
@@ -180,21 +255,6 @@ contract Cartographer is Ownable, ReentrancyGuard {
     }
 
 
-
-
-    // ------------------------------------------------------------------
-    // --   R O L L O V E R   E L E V A T I O N   R O U N D
-    // ------------------------------------------------------------------
-    
-    
-    
-
-
-    
-
-    // ------------------------------------------------------------
-    // --   W I N N I N G S   C A L C U L A T I O N S 
-    // ------------------------------------------------------------
 
     /// @notice Calculation of winnings that are available to be harvested
     /// @return winnings Total winnings for a user, including vesting on previous round's winnings (if any)
@@ -223,7 +283,7 @@ contract Cartographer is Ownable, ReentrancyGuard {
 
 
 
-    /// @dev Select a user's deity, update the expedition's deities with the switched funds
+    /// @notice Select a user's totem
     function selectTotem(uint8 _totem)
         public nonReentrant validTotem(_totem) roundNotLocked
     {
@@ -251,11 +311,18 @@ contract Cartographer is Ownable, ReentrancyGuard {
     }
 
 
-    function farmYieldHarvested(address _user, uint256 _yield) public nonReentrant onlyMCV3 {
+    function injectFarmYield(address _user, uint256 _yield) public onlyMCV3 {
         UserYieldInfo storage user = _getUserInfo(_user);
 
+        // Safety valve if ejected and still receiving farm yield (should never happen, ejection should also eject from MCV3)
+        if (ejected) {
+            // TODO: Update this to MCV3 version
+            SUMMIT.safeTransfer(user.user, _yield);
+            return;
+        }
+
         // If totem unselected or round is locked until rollover, add _yield to inactiveYield, to be included in the next spread operation
-        if (user.totem == 0 || _getIsRoundLocked()) {
+        if (user.totem == 0 || !enabled || _getIsRoundLocked()) {
             user.inactiveYield += _yield;
             return;
         }
@@ -265,7 +332,7 @@ contract Cartographer is Ownable, ReentrancyGuard {
     }
 
 
-    function respread() public nonReentrant roundNotLocked {
+    function respread() public nonReentrant roundNotLocked isEnabled notEjected {
         UserYieldInfo storage user = _getUserInfo(msg.sender);
         _harvestWinnings(user);
         _spreadYield(user, 0);
@@ -301,12 +368,16 @@ contract Cartographer is Ownable, ReentrancyGuard {
     function rollover()
         public
         nonReentrant
+        rolloverAvailable
+        notEjected
     {
-        // TODO: validate rollover available
         // TODO: get winning totem
-        // TODO: validate winning totem
         uint8 winningPlainsTotem = 101;
         uint8 winningMesaTotem = 203;
+
+        // Ensure valid totem
+        if (winningPlainsTotem < 100 || winningPlainsTotem > 101) winningPlainsTotem = 100;
+        if (winningMesaTotem < 200 || winningMesaTotem > 204) winningMesaTotem = 200;
 
         // Pull previous round's mult into current round
         totemRoundMult[100][roundNumber] = totemRoundMult[100][roundNumber - 1];
@@ -317,7 +388,7 @@ contract Cartographer is Ownable, ReentrancyGuard {
         totemRoundMult[203][roundNumber] = totemRoundMult[203][roundNumber - 1];
         totemRoundMult[204][roundNumber] = totemRoundMult[204][roundNumber - 1];
 
-        // Plains
+        // Add plains winnings to mult
         if (totemSupply[winningPlainsTotem] > 0) {
             uint256 elevationSupply = totemSupply[100] + totemSupply[101];
             uint256 plainsMultIncrement = elevationSupply * 1e18 / totemSupply[winningPlainsTotem];
@@ -326,7 +397,7 @@ contract Cartographer is Ownable, ReentrancyGuard {
             totemRoundMult[winningPlainsTotem][roundNumber] += plainsMultIncrement;
         }
         
-        // Mesa
+        // Add mesa winnings to mult
         if (totemSupply[winningMesaTotem] > 0) {
             uint256 elevationSupply = totemSupply[200] + totemSupply[201] + totemSupply[202] + totemSupply[203] + totemSupply[204];
             uint256 mesaMultIncrement = elevationSupply * 1e18 / totemSupply[winningPlainsTotem];
@@ -354,4 +425,18 @@ contract Cartographer is Ownable, ReentrancyGuard {
 
         emit Rollover(msg.sender);
     }
+
+
+    function ejectedWithdraw() public nonReentrant {
+        if (!ejected) revert NotEjected();
+        UserYieldInfo storage user = _getUserInfo(msg.sender);
+
+        uint256 withdrawable = _harvestableWinnings(user);
+        withdrawable += _userUnusedSupply(msg.sender);
+
+        // TODO: Update this to MCV3 version
+        SUMMIT.safeTransfer(user.user, withdrawable);
+    }
+
+
 }
