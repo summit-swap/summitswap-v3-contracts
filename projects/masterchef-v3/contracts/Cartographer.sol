@@ -284,6 +284,13 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
 
 
 
+    function _getTrueRoundSupply(UserYieldInfo memory user) internal view returns (uint256) {
+        if (user.roundSupply == 0) return 0;
+        if (user.expirationRound < roundNumber) return 0;
+        return user.roundSupply;
+    }
+
+
     /// @notice Select a user's totem
     function selectTotem(uint8 _totem)
         public nonReentrant validTotem(_totem) roundNotLocked
@@ -294,13 +301,22 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         // Harvest any winnings in this expedition
         _harvestWinnings(user);
 
-        // Move supply between totems
-        totemSupply[user.totem] -= user.roundSupply;
-        totemSupply[_totem] += user.roundSupply;
+        // If user's true round supply is > 0, move it
+        uint256 trueRoundSupply = _getTrueRoundSupply(user);
+        if (trueRoundSupply > 0) {
+            // Move supply between totems
+            totemSupply[user.totem] -= user.roundSupply;
+            totemSupply[_totem] += user.roundSupply;
 
-        // Move supply expiration between totems
-        totemRoundExpiringSupply[user.totem][user.expirationRound] -= user.roundSupply;
-        totemRoundExpiringSupply[_totem][user.expirationRound] += user.roundSupply;
+            // Move supply expiration between totems
+            totemRoundExpiringSupply[user.totem][user.expirationRound] -= user.roundSupply;
+            totemRoundExpiringSupply[_totem][user.expirationRound] += user.roundSupply;
+        }
+
+        // If user is selecting totem for first time, and has inactive yield, spread it
+        if (user.totem == 0 && user.inactiveYield > 0) {
+            _spreadYield(user, 0);
+        }
 
         // Update user's totem
         user.totem = _totem;
@@ -342,6 +358,8 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
 
     function _spreadYield(UserYieldInfo storage user, uint256 _yield) internal {
         uint256 unplayedYield = 0;
+
+        // Should include yield from current round
         if (user.expirationRound > 0 && user.expirationRound >= roundNumber) {
             unplayedYield += (user.expirationRound - roundNumber) * user.roundSupply;
         }
@@ -423,6 +441,8 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         roundNumber += 1;
 
         // Update round end timestamp
+        // TODO: this should handle multiple rounds ending
+        // TODO: essentially skip rounds and set roundEndTimestamp to next 2hr breakpoint
         roundEndTimestamp += roundDuration;
 
         emit Rollover(msg.sender);
