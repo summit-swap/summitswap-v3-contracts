@@ -1,6 +1,6 @@
-import { assert } from "chai";
+import { assert, expect } from "chai";
 import { ethers, upgrades } from "hardhat";
-import { time, mineUpTo, reset } from "@nomicfoundation/hardhat-network-helpers";
+import { time, mineUpTo, reset, mine } from "@nomicfoundation/hardhat-network-helpers";
 import { TickMath } from "@uniswap/v3-sdk";
 
 import PancakeV3PoolDeployerArtifact from "@pancakeswap/v3-core/artifacts/contracts/PancakeV3PoolDeployer.sol/PancakeV3PoolDeployer.json";
@@ -11,6 +11,7 @@ import NftDescriptorOffchainArtifact from "@pancakeswap/v3-periphery/artifacts/c
 import NonfungiblePositionManagerArtifact from "@pancakeswap/v3-periphery/artifacts/contracts/NonfungiblePositionManager.sol/NonfungiblePositionManager.json";
 import PancakeV3LmPoolDeployerArtifact from "@pancakeswap/v3-lm-pool/artifacts/contracts/PancakeV3LmPoolDeployer.sol/PancakeV3LmPoolDeployer.json";
 import TestLiquidityAmountsArtifact from "@pancakeswap/v3-periphery/artifacts/contracts/test/LiquidityAmountsTest.sol/LiquidityAmountsTest.json";
+import { ether, constants, BN, expectRevert, expectEvent, balance } from "@openzeppelin/test-helpers"
 
 import ERC20MockArtifact from "./ERC20Mock.json";
 import CakeTokenArtifact from "./CakeToken.json";
@@ -21,6 +22,7 @@ import MockBoostArtifact from "./MockBoost.json";
 
 const WETH9Address = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd";
 const nativeCurrencyLabel = "tBNB";
+
 
 describe("Cartographer", function () {
   let admin;
@@ -124,6 +126,11 @@ describe("Cartographer", function () {
     const MasterChefV3 = await ethers.getContractFactory("MasterChefV3");
     const masterChefV3 = await MasterChefV3.deploy(cakeToken.address, nonfungiblePositionManager.address, WETH9Address);
 
+    // Deploy cartographer
+    const Cartographer = await ethers.getContractFactory("Cartographer");
+    const cartographer = await Cartographer.deploy(cakeToken.address, masterChefV3.address);
+    const cartographerMockMCV3 = await Cartographer.deploy(cakeToken.address, admin.address)
+
     await dummyTokenV3.mint(admin.address, ethers.utils.parseUnits("1000"));
     await dummyTokenV3.approve(masterChefV2.address, ethers.constants.MaxUint256);
     await masterChefV2.deposit(1, await dummyTokenV3.balanceOf(admin.address));
@@ -225,6 +232,8 @@ describe("Cartographer", function () {
 
     this.nonfungiblePositionManager = nonfungiblePositionManager;
     this.masterChefV3 = masterChefV3;
+    this.cartographer = cartographer;
+    this.cartographerMockMCV3 = cartographerMockMCV3;
     this.pools = pools;
     this.poolAddresses = poolAddresses;
     this.cakeToken = cakeToken;
@@ -263,14 +272,16 @@ describe("Cartographer", function () {
       Switching totem should move supply expiration if it hasn't expired already
 
 
-    Enabled
+    DONE Enabled
       Cannot enable if already enabled
+      If not enabled, adds yield to inactiveYield, else spreads it
 
 
-    Cartographer <--> MCV3
+    DONE Cartographer <--> MCV3
       Adding cartographer to mcv3
       Ejecting cartographer from mcv3
       Adding new cartographer from mcv3
+      Cannot eject cartographer if already ejected
     
     Yield
       Harvesting from oasis works
@@ -316,17 +327,17 @@ describe("Cartographer", function () {
 
     Ejected
       Cannot call ejectedWithdraw when not ejected
-      Cannot call respread when not ejected
-      Cannot rollover when not ejected
-      injectFarmYield should send SUMMIT back to user if called when ejected
+      DONE Cannot call respread when not ejected
+      Cannot rollover when ejected
+      DONE injectFarmYield should send SUMMIT back to user if called when ejected
       Users can emergency withdraw correct amount of both winnings and unused yield
         summitAmountBelongToCart should go to 0
-      Can be ejected through Cartographer or MCV3, each should eject the other
-      Can only be ejected once
+      DONE Can be ejected through Cartographer or MCV3, each should eject the other
+      DONE Can only be ejected once
 
     Enabled
-      If not enabled, injectFarmYield should increment inactiveYield
-      Cannot call respread when not enabled
+      DONE If not enabled, injectFarmYield should increment inactiveYield
+      DONE Cannot call respread when not enabled
 
     Sweep token
       Should work for ERC20 tokens
@@ -336,11 +347,155 @@ describe("Cartographer", function () {
 
   */
 
-  describe("Real world user flow", function () {
-    context("when there are 2 users and 2 pools with no trading", function () {
-      it("should executed successfully", async function () {
-        // 1
+  describe.only("Real world user flow", function () {
+    context("MCV3 <--> Cartographer", function () {
+      it("should be able to add cartographer to MCV3", async function () {
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await mine(1)
+
+        const mcv3cartAddress = await this.masterChefV3.Cartographer();
+
+        assert(this.cartographer.address === mcv3cartAddress)
       });
+      it("should be able to eject cartographer from MCV3", async function () {
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await mine(1)
+
+        let mcv3cartAddress = await this.masterChefV3.Cartographer();
+        assert(this.cartographer.address === mcv3cartAddress)
+
+        await this.masterChefV3.ejectCartographer();
+        await mine(1)
+        
+        mcv3cartAddress = await this.masterChefV3.Cartographer();
+
+        assert(mcv3cartAddress === constants.ZERO_ADDRESS)
+
+        const cartEjected = await this.cartographer.ejected();
+        assert(cartEjected)
+      })
+      it("should be able to self eject cartographer", async function () {
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await mine(1)
+
+        let mcv3cartAddress = await this.masterChefV3.Cartographer();
+        assert(this.cartographer.address === mcv3cartAddress)
+
+        await this.cartographer.ejectCartographer();
+        await mine(1)
+        
+        mcv3cartAddress = await this.masterChefV3.Cartographer();
+
+        assert(mcv3cartAddress === constants.ZERO_ADDRESS)
+
+        const cartEjected = await this.cartographer.ejected();
+        assert(cartEjected)
+      })
+      it("MCV3 should revert if cartographer already ejected", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await this.cartographer.ejectCartographer();
+        await expect(this.masterChefV3.ejectCartographer()).to.be.revertedWith("NoCartographerToEject")
+      })
+      it("should revert if cartographer already ejected", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await this.cartographer.ejectCartographer();
+        await expect(this.cartographer.ejectCartographer()).to.be.revertedWith("AlreadyEjected")
+      })
+      it("should send yield to user if ejected", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+
+        // Ensure Cart thinks ejection is coming from MCV3 (set to admin)
+        await this.cartographerMockMCV3.transferOwnership(user2.address);
+        await this.cartographerMockMCV3.ejectCartographer();
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const summitInCart = await this.cartographerMockMCV3.summitAmountBelongToCart()
+        expect(summitInCart).eq(0)
+
+        const userInactiveYield = (await this.cartographerMockMCV3.userInfo(user1.address)).inactiveYield
+        expect(userInactiveYield).eq(0)
+
+        const userSummit = await this.cakeToken.balanceOf(user1.address)
+        expect(userSummit).to.eq(ethers.utils.parseUnits("10"))
+      })
+      it("should revert respread if ejected", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await this.cartographer.enable();
+        await this.cartographer.ejectCartographer();
+        await expect(this.cartographer.respread()).to.be.revertedWith("Ejected")
+      })
+      it("should revert rollover when ejected", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await this.cartographer.enable();
+        await this.cartographer.ejectCartographer();
+        await expect(this.cartographer.rollover()).to.be.revertedWith("Ejected")
+      })
+    });
+
+    context("Cartographer enable", function () {
+      it("should be able to enable cartographer", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await expect(this.cartographer.enable()).to.emit(this.cartographer, "EnableCartographer")
+
+        const enabled = await this.cartographer.enabled()
+        assert(enabled)
+      });
+      it("should revert if already enabled", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await this.cartographer.enable()
+
+        await expect(this.cartographer.enable()).to.be.revertedWith("AlreadyEnabled")
+      });
+      it("should set roundEndTimestamp when enabled", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await this.cartographer.enable()
+
+        const roundEndTimestamp = await this.cartographer.roundEndTimestamp()
+        const isDivBy2Hrs = roundEndTimestamp % (60 * 60 * 2)
+
+        assert(roundEndTimestamp !== 0)
+        assert(isDivBy2Hrs === 0)
+      });
+      it("should add yield to inactiveYield if not enabled", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const summitInCart = await this.cartographerMockMCV3.summitAmountBelongToCart()
+        expect(summitInCart).eq(ethers.utils.parseUnits("10"))
+
+        const userInactiveYield = (await this.cartographerMockMCV3.userInfo(user1.address)).inactiveYield
+        expect(userInactiveYield).eq(ethers.utils.parseUnits("10"))
+      })
+      it("should spread yield if enabled", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const summitInCart = await this.cartographerMockMCV3.summitAmountBelongToCart()
+        expect(summitInCart).eq(ethers.utils.parseUnits("10"))
+
+        const userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+
+        expect(userInfo.inactiveYield).eq(0)
+        expect(userInfo.roundSupply).eq(ethers.utils.parseUnits("10").div(24))
+      })
+      it("should revert respread when not enabled", async function () {
+        await network.provider.send("evm_setAutomine", [true]);
+        await expect(this.cartographer.respread()).to.be.revertedWith("NotEnabled")
+      })
     });
   });
 });

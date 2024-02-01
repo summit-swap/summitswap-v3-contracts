@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./libraries/SafeCast.sol";
 import "./interfaces/IMasterChefV3.sol";
 import "./interfaces/ICartographer.sol";
+import "hardhat/console.sol";
 
 /*
 ---------------------------------------------------------------------------------------------
@@ -77,7 +78,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         uint256 lifetimeWinnings;
     }
 
-    mapping(address => UserYieldInfo) userInfo;
+    mapping(address => UserYieldInfo) public userInfo;
 
 
     event UserJoinedExpedition(address indexed user, uint8 _deity, uint8 _safetyFactor, uint256 _everestOwned);
@@ -174,15 +175,15 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         _;
     }
 
-    modifier roundNotLocked()  {
-        if (roundEndTimestamp != 0 && block.timestamp < (roundEndTimestamp - roundEndLockoutDuration)) revert RoundLocked();
-        _;
-    }
-
     function _getIsRoundLocked() internal view returns (bool) {
         if (roundEndTimestamp == 0) return false;
         return block.timestamp > (roundEndTimestamp - roundEndLockoutDuration);
     } 
+
+    modifier roundNotLocked()  {
+        if (_getIsRoundLocked()) revert RoundLocked();
+        _;
+    }
     
     modifier rolloverAvailable() {
         if (roundEndTimestamp == 0 || block.timestamp <= roundEndTimestamp) revert RolloverNotAvailable();
@@ -280,6 +281,17 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
             user.lifetimeWinnings += winnings;
             _safeTransferSUMMIT(user.user, winnings);
         }
+    }
+
+    function harvestWinnings() public nonReentrant {
+        UserYieldInfo storage user = _getUserInfo(msg.sender);
+
+        // Harvest any winnings in this expedition
+        _harvestWinnings(user);
+
+        // Update debt to mult at end of previous round, don't respread (where this is usually done)
+        user.debt = totemRoundMult[user.totem][roundNumber - 1];
+
     }
 
 
