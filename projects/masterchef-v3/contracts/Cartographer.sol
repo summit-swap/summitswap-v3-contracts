@@ -162,6 +162,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     error AlreadyEjected();
     error NotEjected();
     error Ejected();
+    error InsufficientAmount();
 
     modifier onlyMCV3() {
         if (msg.sender != address(masterChefV3)) revert NotMCV3();
@@ -436,6 +437,33 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         withdrawable += _userUnusedSupply(msg.sender);
 
         _safeTransferSUMMIT(user.user, withdrawable);
+    }
+
+    /// @notice Transfers the full amount of a token held by this contract to recipient
+    /// @dev The amountMinimum parameter prevents malicious contracts from stealing the token from users
+    /// @param token The contract address of the token which will be transferred to `recipient`
+    /// @param amountMinimum The minimum amount of token required for a transfer
+    /// @param recipient The destination address of the token
+    function sweepToken(address token, uint256 amountMinimum, address recipient) external nonReentrant {
+        uint256 balanceToken = IERC20(token).balanceOf(address(this));
+        // Need to reduce summitAmountBelongToCart.
+        if (token == address(SUMMIT)) {
+            unchecked {
+                // In fact balance should always be greater than or equal to summitAmountBelongToCart, but in order to avoid any unknown issue, we added this check.
+                if (balanceToken >= summitAmountBelongToCart) {
+                    balanceToken -= summitAmountBelongToCart;
+                } else {
+                    // This should never happened.
+                    summitAmountBelongToCart = balanceToken;
+                    balanceToken = 0;
+                }
+            }
+        }
+        if (balanceToken < amountMinimum) revert InsufficientAmount();
+
+        if (balanceToken > 0) {
+            IERC20(token).safeTransfer(recipient, balanceToken);
+        }
     }
 
 
