@@ -1,7 +1,8 @@
+/* eslint-disable no-await-in-loop */
 import { assert, expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 import { time, mineUpTo, reset, mine } from "@nomicfoundation/hardhat-network-helpers";
-import { TickMath } from "@uniswap/v3-sdk";
+import { ether, constants, BN, expectRevert, expectEvent, balance } from "@openzeppelin/test-helpers"
 
 import PancakeV3PoolDeployerArtifact from "@pancakeswap/v3-core/artifacts/contracts/PancakeV3PoolDeployer.sol/PancakeV3PoolDeployer.json";
 import PancakeV3FactoryArtifact from "@pancakeswap/v3-core/artifacts/contracts/PancakeV3Factory.sol/PancakeV3Factory.json";
@@ -11,7 +12,6 @@ import NftDescriptorOffchainArtifact from "@pancakeswap/v3-periphery/artifacts/c
 import NonfungiblePositionManagerArtifact from "@pancakeswap/v3-periphery/artifacts/contracts/NonfungiblePositionManager.sol/NonfungiblePositionManager.json";
 import PancakeV3LmPoolDeployerArtifact from "@pancakeswap/v3-lm-pool/artifacts/contracts/PancakeV3LmPoolDeployer.sol/PancakeV3LmPoolDeployer.json";
 import TestLiquidityAmountsArtifact from "@pancakeswap/v3-periphery/artifacts/contracts/test/LiquidityAmountsTest.sol/LiquidityAmountsTest.json";
-import { ether, constants, BN, expectRevert, expectEvent, balance } from "@openzeppelin/test-helpers"
 
 import ERC20MockArtifact from "./ERC20Mock.json";
 import CakeTokenArtifact from "./CakeToken.json";
@@ -19,6 +19,7 @@ import SyrupBarArtifact from "./SyrupBar.json";
 import MasterChefArtifact from "./MasterChef.json";
 import MasterChefV2Artifact from "./MasterChefV2.json";
 import MockBoostArtifact from "./MockBoost.json";
+import { getTimestamp, mineBlockWithTimestamp, twoHrs } from "./utils";
 
 const WETH9Address = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd";
 const nativeCurrencyLabel = "tBNB";
@@ -240,7 +241,7 @@ describe("Cartographer", function () {
     this.liquidityAmounts = liquidityAmounts;
     this.swapRouter = pancakeV3SwapRouter;
 
-    await network.provider.send("evm_setAutomine", [false]);
+    // await network.provider.send("evm_setAutomine", [false]);
   });
 
   afterEach(async function () {
@@ -302,16 +303,16 @@ describe("Cartographer", function () {
       Should set inactiveYield to 0
       Total yield before and after should be equal (10 over 10 rounds == 5 over 20 rounds)
 
-    Rollover
-      Can only call rollover when rollover available
-      injectFarmYield when locked until rollover should increment inactiveYield
-      Winning totem mult should be calculated correctly
-      Mults at end of round should be inserted into totemRoundMult mapping
-      Totem supplies should be updated with the expiration tickets
-      Round number incremented
-      Round end timestamp incremented
-      Rollover event emitted
-      Should work if multiple rounds have passed
+    DONE Rollover
+      DONE Can only call rollover when rollover available
+      DONE injectFarmYield when locked until rollover should increment inactiveYield
+      DONE Winning totem mult should be calculated correctly
+      DONE Mults at end of round should be inserted into totemRoundMult mapping
+      DONE Totem supplies should be updated with the expiration tickets
+      DONE Round number incremented
+      DONE Round end timestamp incremented
+      DONE Rollover event emitted
+      DONE Should work if multiple rounds have passed
 
     SelectTotem
       Should switch totem
@@ -351,7 +352,6 @@ describe("Cartographer", function () {
     context("MCV3 <--> Cartographer", function () {
       it("should be able to add cartographer to MCV3", async function () {
         await this.masterChefV3.setCartographer(this.cartographer.address);
-        await mine(1)
 
         const mcv3cartAddress = await this.masterChefV3.Cartographer();
 
@@ -359,13 +359,11 @@ describe("Cartographer", function () {
       });
       it("should be able to eject cartographer from MCV3", async function () {
         await this.masterChefV3.setCartographer(this.cartographer.address);
-        await mine(1)
 
         let mcv3cartAddress = await this.masterChefV3.Cartographer();
         assert(this.cartographer.address === mcv3cartAddress)
 
         await this.masterChefV3.ejectCartographer();
-        await mine(1)
         
         mcv3cartAddress = await this.masterChefV3.Cartographer();
 
@@ -376,13 +374,11 @@ describe("Cartographer", function () {
       })
       it("should be able to self eject cartographer", async function () {
         await this.masterChefV3.setCartographer(this.cartographer.address);
-        await mine(1)
 
         let mcv3cartAddress = await this.masterChefV3.Cartographer();
         assert(this.cartographer.address === mcv3cartAddress)
 
         await this.cartographer.ejectCartographer();
-        await mine(1)
         
         mcv3cartAddress = await this.masterChefV3.Cartographer();
 
@@ -392,20 +388,16 @@ describe("Cartographer", function () {
         assert(cartEjected)
       })
       it("MCV3 should revert if cartographer already ejected", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await this.masterChefV3.setCartographer(this.cartographer.address);
         await this.cartographer.ejectCartographer();
         await expect(this.masterChefV3.ejectCartographer()).to.be.revertedWith("NoCartographerToEject")
       })
       it("should revert if cartographer already ejected", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await this.masterChefV3.setCartographer(this.cartographer.address);
         await this.cartographer.ejectCartographer();
         await expect(this.cartographer.ejectCartographer()).to.be.revertedWith("AlreadyEjected")
       })
       it("should send yield to user if ejected", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
-
         // Ensure Cart thinks ejection is coming from MCV3 (set to admin)
         await this.cartographerMockMCV3.transferOwnership(user2.address);
         await this.cartographerMockMCV3.ejectCartographer();
@@ -423,14 +415,12 @@ describe("Cartographer", function () {
         expect(userSummit).to.eq(ethers.utils.parseUnits("10"))
       })
       it("should revert respread if ejected", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await this.masterChefV3.setCartographer(this.cartographer.address);
         await this.cartographer.enable();
         await this.cartographer.ejectCartographer();
         await expect(this.cartographer.respread()).to.be.revertedWith("Ejected")
       })
       it("should revert rollover when ejected", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await this.masterChefV3.setCartographer(this.cartographer.address);
         await this.cartographer.enable();
         await this.cartographer.ejectCartographer();
@@ -440,31 +430,26 @@ describe("Cartographer", function () {
 
     context("Cartographer enable", function () {
       it("should be able to enable cartographer", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await expect(this.cartographer.enable()).to.emit(this.cartographer, "EnableCartographer")
 
         const enabled = await this.cartographer.enabled()
         assert(enabled)
       });
       it("should revert if already enabled", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await this.cartographer.enable()
 
         await expect(this.cartographer.enable()).to.be.revertedWith("AlreadyEnabled")
       });
       it("should set roundEndTimestamp when enabled", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await this.cartographer.enable()
 
         const roundEndTimestamp = await this.cartographer.roundEndTimestamp()
-        const isDivBy2Hrs = roundEndTimestamp % (60 * 60 * 2)
+        const isDivBy2Hrs = roundEndTimestamp % twoHrs
 
         assert(roundEndTimestamp !== 0)
         assert(isDivBy2Hrs === 0)
       });
       it("should add yield to inactiveYield if not enabled", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
-
         await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
         await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
 
@@ -475,8 +460,6 @@ describe("Cartographer", function () {
         expect(userInactiveYield).eq(ethers.utils.parseUnits("10"))
       })
       it("should spread yield if enabled", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
-
         // Enable and set totem
         await this.cartographerMockMCV3.enable()
         await this.cartographerMockMCV3.connect(user1).selectTotem(100)
@@ -493,9 +476,203 @@ describe("Cartographer", function () {
         expect(userInfo.roundSupply).eq(ethers.utils.parseUnits("10").div(24))
       })
       it("should revert respread when not enabled", async function () {
-        await network.provider.send("evm_setAutomine", [true]);
         await expect(this.cartographer.respread()).to.be.revertedWith("NotEnabled")
       })
+    });
+
+    context.only("Rollover", function () {
+      it("should revert if cartographer not enabled", async function () {
+        await expect(this.cartographerMockMCV3.rollover()).to.be.revertedWith('NotEnabled')
+      });
+      it("should revert if rollover not available", async function () {
+        await this.cartographerMockMCV3.enable();
+        await expect (this.cartographerMockMCV3.rollover()).to.be.revertedWith("RolloverNotAvailable")
+      });
+      it("should increment round number, round end timestamp, and emit Rollover event", async function () {
+        await this.cartographerMockMCV3.enable();
+        const roundEndTimestampInit = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        
+        await mineBlockWithTimestamp(roundEndTimestampInit - 20)
+        await expect (this.cartographerMockMCV3.rollover()).to.be.revertedWith("RolloverNotAvailable")
+        
+        const roundNumberInit = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        
+        await mineBlockWithTimestamp(roundEndTimestampInit)
+        await expect(this.cartographerMockMCV3.rollover()).to.emit(this.cartographerMockMCV3, "Rollover")
+        
+        const roundNumberFinal = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        const roundEndTimestampFinal = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+
+        console.log(`Round Number ${roundNumberInit} --> ${roundNumberFinal}, diff ${roundNumberFinal - roundNumberInit}`)
+        console.log(`Round End Timestamp ${roundEndTimestampInit} --> ${roundEndTimestampFinal}, diff ${roundEndTimestampFinal - roundEndTimestampInit}`)
+
+        expect(roundNumberFinal).to.equal(roundNumberInit + 1)
+        expect(roundEndTimestampFinal).to.equal(roundEndTimestampInit + twoHrs)
+      });
+      it("should rollover multiple rounds successfully", async function () {
+        await this.cartographerMockMCV3.enable();
+        const roundEndTimestampInit = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        const roundNumberInit = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        
+        await mineBlockWithTimestamp(roundEndTimestampInit + twoHrs)
+        await expect(this.cartographerMockMCV3.rollover()).to.emit(this.cartographerMockMCV3, "Rollover")
+        
+        const roundNumberFinal = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        const roundEndTimestampFinal = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+
+        console.log(`Round Number ${roundNumberInit} --> ${roundNumberFinal}, diff ${roundNumberFinal - roundNumberInit}`)
+        console.log(`Round End Timestamp ${roundEndTimestampInit} --> ${roundEndTimestampFinal}, diff ${roundEndTimestampFinal - roundEndTimestampInit}`)
+
+        expect(roundNumberFinal).to.equal(roundNumberInit + 1)
+        expect(roundEndTimestampFinal).to.equal(roundEndTimestampInit + twoHrs + twoHrs)
+      });
+      it("should handle winning mult 0 supply correctly", async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const prevRoundNumber = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        const totem100MultInit = await this.cartographerMockMCV3.totemRoundMult(100, prevRoundNumber)
+        const totem101MultInit = await this.cartographerMockMCV3.totemRoundMult(101, prevRoundNumber)
+        
+        // Rollover
+        const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+        await this.cartographerMockMCV3.rollover()
+        
+        
+        const totem100MultFinal = await this.cartographerMockMCV3.totemRoundMult(100, prevRoundNumber)
+        const totem101MultFinal = await this.cartographerMockMCV3.totemRoundMult(101, prevRoundNumber)
+
+        console.log(`Totem 100 mult ${totem100MultInit} --> ${totem100MultFinal}`)
+        console.log(`Totem 101 mult ${totem101MultInit} --> ${totem101MultFinal}`)
+
+        expect(totem100MultInit).eq(0)
+        expect(totem100MultFinal).eq(0)
+        expect(totem101MultInit).eq(0)
+        expect(totem101MultFinal).eq(0) // (10 + 0) / 0 = undef
+      })
+      it("should calculate and insert mults correctly", async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+        await this.cartographerMockMCV3.connect(user2).selectTotem(101)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("15"))
+        await this.cartographerMockMCV3.injectFarmYield(user2.address, ethers.utils.parseUnits("15"))
+
+        const summitInCart = await this.cartographerMockMCV3.summitAmountBelongToCart()
+        expect(summitInCart).eq(ethers.utils.parseUnits("25"))
+
+        let prevRoundNumber = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        const totem100MultInit = await this.cartographerMockMCV3.totemRoundMult(100, prevRoundNumber)
+        const totem101MultInit = await this.cartographerMockMCV3.totemRoundMult(101, prevRoundNumber)
+        
+        // Rollover
+        let roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+        await this.cartographerMockMCV3.rollover()
+        
+        
+        const totem100MultFinal = await this.cartographerMockMCV3.totemRoundMult(100, prevRoundNumber)
+        const totem101MultFinal = await this.cartographerMockMCV3.totemRoundMult(101, prevRoundNumber)
+
+        console.log(`@RO1: Totem 100 mult ${totem100MultInit} --> ${totem100MultFinal}`)
+        console.log(`@RO1: Totem 101 mult ${totem101MultInit} --> ${totem101MultFinal}`)
+
+        expect(totem100MultInit).eq(0)
+        expect(totem100MultFinal).eq(0)
+        expect(totem101MultInit).eq(0)
+        expect(totem101MultFinal).eq("1666666666666666665") // (10 + 15) / 15 = 1.666...
+
+        // Rollover again
+        prevRoundNumber = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+        await this.cartographerMockMCV3.rollover()
+        
+        const totem100MultFinal2 = await this.cartographerMockMCV3.totemRoundMult(100, prevRoundNumber)
+        const totem101MultFinal2 = await this.cartographerMockMCV3.totemRoundMult(101, prevRoundNumber)
+
+        console.log(`@RO2: Totem 100 mult ${totem100MultFinal} --> ${totem100MultFinal2}`)
+        console.log(`@RO2: Totem 101 mult ${totem101MultFinal} --> ${totem101MultFinal2}`)
+
+        expect(totem100MultFinal).eq(0)
+        expect(totem101MultFinal).eq("1666666666666666665") // 1 * ((10 + 15) / 15 = 1.666...)
+        expect(totem100MultFinal2).eq(0)
+        expect(totem101MultFinal2).eq("3333333333333333330") // 2 * ((10 + 15) / 15 = 1.666...)
+      });
+      it("should update totem supplies correctly with expirations", async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const totem100SupplyInit = await this.cartographerMockMCV3.totemSupply(100)
+        expect(totem100SupplyInit).to.equal(ethers.utils.parseUnits('10').div(24))
+
+        // Rollover until penultimate round
+        for (let i = 0; i < 23; i++) {
+          // Rollover
+          const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+          await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+          await this.cartographerMockMCV3.rollover()
+        }
+
+        // Users supply should still be in totem
+        const totem100SupplyMid = await this.cartographerMockMCV3.totemSupply(100)
+        expect(totem100SupplyMid).to.equal(ethers.utils.parseUnits('10').div(24))
+
+        // Final Rollover
+        const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+        await this.cartographerMockMCV3.rollover()
+
+        // Users supply should have been removed
+        const totem100SupplyFinal = await this.cartographerMockMCV3.totemSupply(100)
+        expect(totem100SupplyFinal).to.equal(0)
+      });
+      it("should increment inactiveYield if injectFarmYield when locked until rollover", async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+        await this.cartographerMockMCV3.connect(user2).selectTotem(100)
+
+        // Rollover Setup
+        const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+
+        // Inject User 1 during lockout
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        // Execute Rollover
+        await this.cartographerMockMCV3.rollover()
+
+        // Inject User 2 after lockout
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user2.address, ethers.utils.parseUnits("10"))
+
+        const user1Info = await this.cartographerMockMCV3.userInfo(user1.address)
+        const user2Info = await this.cartographerMockMCV3.userInfo(user2.address)
+
+        expect(user1Info.inactiveYield).to.equal(ethers.utils.parseUnits("10"))
+        expect(user2Info.inactiveYield).to.equal(0)
+        expect(user1Info.roundSupply).to.equal(0)
+        expect(user2Info.roundSupply).to.equal(ethers.utils.parseUnits("10").div(24))
+      });
+    });
+
+    context("User supply", function () {
+      it("should be able to enable cartographer");
     });
   });
 });

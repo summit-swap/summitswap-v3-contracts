@@ -50,17 +50,17 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     uint256 public roundNumber = 1; // Prevent any subtraction underflow errors
     uint256 public roundEndTimestamp;                                    // Time at which each elevation's current round ends
     uint256 public harvestRoundSpread = 24; // Harvested SUMMIT gamed over 2 days
-    uint8 constant roundEndLockoutDuration = 120;
+    uint8 constant public roundEndLockoutDuration = 120;
 
     mapping(uint8 => mapping(uint256 => uint256)) public totemWinsAccum;    // Accumulator of the total number of wins for each totem
     mapping(uint8 => mapping(uint256 => uint8)) public winningTotem;        // The specific winning totem for each elevation round
 
-    mapping(uint8 => uint256) totemSupply;
-    mapping(uint8 => mapping(uint256 => uint256)) totemRoundExpiringSupply;
+    mapping(uint8 => uint256) public totemSupply;
+    mapping(uint8 => mapping(uint256 => uint256)) public totemRoundExpiringSupply;
 
     /// Tracks earnings for each totem as the rounds progress
     /// @dev totemRoundMult[totemId][roundNumber], roundNumber is that of the round that closed
-    mapping(uint8 => mapping(uint256 => uint256)) totemRoundMult;
+    mapping(uint8 => mapping(uint256 => uint256)) public totemRoundMult;
 
     struct UserYieldInfo {
         address user;
@@ -117,21 +117,18 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         masterChefV3 = IMasterChefV3(_masterChefV3);
     }
 
+    function _getNextRoundEndTimestamp() internal view returns (uint256) {
+        return block.timestamp + (2 hours - (block.timestamp % 2 hours));
+    }
+
     /// @dev Turns on the Summit ecosystem across all contracts
     function enable()
         public
         onlyOwner
     {
         if (enabled) revert AlreadyEnabled();
-
-        // The next top of hour from the enable timestamp
-        uint256 nextTwoHourTimestamp = block.timestamp + (2 hours - (block.timestamp % 2 hours));
-
-        // The first 'round' ends when the elevation unlocks
-        roundEndTimestamp = nextTwoHourTimestamp;
-
+        roundEndTimestamp = _getNextRoundEndTimestamp();
         enabled = true;
-
         emit EnableCartographer();
     }
 
@@ -384,7 +381,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         }
 
         user.roundSupply = (_yield + user.inactiveYield + unplayedYield) / user.roundSpread;
-        user.expirationRound = roundNumber + user.roundSpread;
+        user.expirationRound = roundNumber + user.roundSpread - 1; // Current round counts :D
         user.lifetimeSupply += _yield;
         if (user.inactiveYield > 0) user.inactiveYield = 0;
 
@@ -400,6 +397,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     function rollover()
         public
         nonReentrant
+        isEnabled
         rolloverAvailable
         notEjected
     {
@@ -420,6 +418,8 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         totemRoundMult[203][roundNumber] = totemRoundMult[203][roundNumber - 1];
         totemRoundMult[204][roundNumber] = totemRoundMult[204][roundNumber - 1];
 
+        // TODO: Maybe burn supply that wasn't won because winning totem's supply was 0
+        
         // Add plains winnings to mult
         if (totemSupply[winningPlainsTotem] > 0) {
             uint256 elevationSupply = totemSupply[100] + totemSupply[101];
@@ -453,9 +453,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         roundNumber += 1;
 
         // Update round end timestamp
-        // TODO: this should handle multiple rounds ending
-        // TODO: essentially skip rounds and set roundEndTimestamp to next 2hr breakpoint
-        roundEndTimestamp += roundDuration;
+        roundEndTimestamp = _getNextRoundEndTimestamp();
 
         emit Rollover(msg.sender);
     }
