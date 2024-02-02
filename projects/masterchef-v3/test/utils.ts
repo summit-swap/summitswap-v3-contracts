@@ -41,3 +41,16 @@ export const mineBlocks = async (blockCount: number) => {
       await mineBlock()
   }
 }
+export const giveETH = async (add: string) => {
+  await network.provider.send("hardhat_setBalance", [
+      add,
+      "0x56BC75E2D63100000",
+  ]);
+}
+export const impersonate = async (add: string) => {
+  await network.provider.request({
+      method: "hardhat_impersonateAccount",
+      params: [add],
+  });
+  return ethers.getSigner(add)
+}

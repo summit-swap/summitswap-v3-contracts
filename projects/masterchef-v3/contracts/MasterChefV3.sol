@@ -362,7 +362,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
 
     /// @notice Allows user to set their oasis farming status.
     /// @param _newFarmingOasis updated status.
-    function updateFarmingOasis(bool _newFarmingOasis) external nonReentrant {
+    function setFarmingOasis(bool _newFarmingOasis) external nonReentrant {
         userFarmingOasis[msg.sender] = _newFarmingOasis;
         emit UpdateUserFarmingOasis(msg.sender, _newFarmingOasis);
     }
@@ -877,6 +877,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
             return;
         }
 
+        // TODO: Add tax, allow cake burnable
         if (_oasis) {
             _safeTransfer(_to, _amount);
         } else {

@@ -65,7 +65,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     struct UserYieldInfo {
         address user;
         uint256 roundSpread; // Default 24, options are 12 / 24 / 48 / 96
-        uint256 expirationRound; // Round at which the users spread will expire
+        uint256 expirationRound; // Round after which the users spread will expire
 
         uint8 totem; // 0 for no selection, 100 101 for plains, 200 201 202 203 204 for mesa
 
@@ -235,9 +235,9 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         if (_user != user.user) return 0;
         
         // Exit if users yield has been expired
-        if (user.expirationRound < roundNumber) return user.inactiveYield;
+        if (user.expirationRound < roundNumber) return 0;
 
-        return user.inactiveYield + (user.roundSupply * (user.expirationRound - roundNumber));
+        return user.roundSupply * (1 + user.expirationRound - roundNumber);
     }
     function userInactiveYield(address _user) public view returns (uint256) {
         UserYieldInfo memory user = userInfo[_user];
@@ -366,21 +366,16 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     }
 
     function _spreadYield(UserYieldInfo storage user, uint256 _yield) internal {
-        uint256 unplayedYield = 0;
-
-        // Should include yield from current round
-        if (user.expirationRound > 0 && user.expirationRound >= roundNumber) {
-            unplayedYield += (user.expirationRound - roundNumber) * user.roundSupply;
-        }
+        uint256 unusedSupply = _userUnusedSupply(user.user);
 
         // If user has some unplayed yield (if they are on round 5/24 on their yield spread),
         //   then the current yield being played must be replaced
-        if (unplayedYield > 0) {
+        if (unusedSupply > 0) {
             totemSupply[user.totem] -= user.roundSupply;
             totemRoundExpiringSupply[user.totem][user.expirationRound] -= user.roundSupply;
         }
 
-        user.roundSupply = (_yield + user.inactiveYield + unplayedYield) / user.roundSpread;
+        user.roundSupply = (_yield + user.inactiveYield + unusedSupply) / user.roundSpread;
         user.expirationRound = roundNumber + user.roundSpread - 1; // Current round counts :D
         user.lifetimeSupply += _yield;
         if (user.inactiveYield > 0) user.inactiveYield = 0;
@@ -464,6 +459,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         UserYieldInfo storage user = _getUserInfo(msg.sender);
 
         uint256 withdrawable = _harvestableWinnings(user);
+        withdrawable += user.inactiveYield;
         withdrawable += _userUnusedSupply(msg.sender);
 
         _safeTransferSUMMIT(user.user, withdrawable);
