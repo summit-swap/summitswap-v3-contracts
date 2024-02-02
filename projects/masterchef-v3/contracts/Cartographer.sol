@@ -97,6 +97,7 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     event EnableCartographer();
     event HarvestedWinnings(address indexed user, uint256 winnings);
     event Respread(address indexed user);
+    event InjectFarmYield(address indexed user, uint256 yield);
     
 
 
@@ -365,6 +366,8 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
 
         _harvestWinnings(user);
         _spreadYield(user, _yield);
+
+        emit InjectFarmYield(_user, _yield);
     }
 
 

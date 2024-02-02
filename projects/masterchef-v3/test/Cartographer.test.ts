@@ -252,7 +252,8 @@ describe("Cartographer", function () {
 
   /*
 
-  Tests:
+  Info:
+  
     Cartographer States
       Constructed
       Enabled
@@ -270,41 +271,41 @@ describe("Cartographer", function () {
 
 
 
-    DONE Supply
-      DONE totemSupply, unusedUserSupply, userEnteredSupply should be correct across rounds and after expiration
+  Tests:
+
+    DONE Cartographer <--> MCV3
+      DONE Adding cartographer to mcv3
+      DONE Ejecting cartographer from mcv3
+      DONE Adding new cartographer from mcv3
+      DONE Cannot eject cartographer if already ejected
 
 
     DONE Enabled
-      Cannot enable if already enabled
-      If not enabled, adds yield to inactiveYield, else spreads it
+      DONE If not enabled, injectFarmYield should increment inactiveYield
+      DONE Cannot call respread when not enabled
 
 
-    DONE Cartographer <--> MCV3
-      Adding cartographer to mcv3
-      Ejecting cartographer from mcv3
-      Adding new cartographer from mcv3
-      Cannot eject cartographer if already ejected
-    
-    Inject Yield
-      should Increment summitAmountBelongToCart
-      DONE should Transfer summit back to user if ejected
-      If not enabled, round locked, or user doesn't have totem, should add yield to inactive yield
-        Else should be included in total yield to be played
-      Should harvest current winnings
-      Should spread remaining yield over round spread
-
-    MCV3
+    MCV3 Harvest
       Users can update farming oasis status
       Tax taken if harvested in oasis
       Yield sent to cartographer if harvested not in oasis
       No tax taken if cartographer ejected
       Yield always sent to user if cartographer ejected
 
-    Harvest
+
+    DONE Inject Yield
+      DONE should emit event InjectFarmYield
+      DONE should Increment summitAmountBelongToCart
+      DONE should Transfer summit back to user if ejected
+      DONE If not enabled, round locked, or user doesn't have totem, should add yield to inactive yield
+      DONE Should harvest current winnings
+      DONE Should spread remaining yield over round spread
+
+    Cartographer Harvest
       harvestableWinnings should be correct
       harvest should work
     
-    Respread (spreadYield)
+    DONE Respread (spreadYield)
       DONE Should be reverted if cart not enabled
       DONE Should be reverted if cart ejected
       DONE Should be reverted if called during round lockout
@@ -313,6 +314,11 @@ describe("Cartographer", function () {
       DONE Should accurately spread new yield + unused yield + inactive yield
       DONE Should set inactiveYield to 0
       DONE Total yield before and after should be equal (10 over 10 rounds == 5 over 20 rounds)
+
+
+    DONE Supply
+      DONE totemSupply, unusedUserSupply, userEnteredSupply should be correct across rounds and after expiration
+
 
     DONE Rollover
       DONE Can only call rollover when rollover available
@@ -324,6 +330,7 @@ describe("Cartographer", function () {
       DONE Round end timestamp incremented
       DONE Rollover event emitted
       DONE Should work if multiple rounds have passed
+
 
     DONE SelectTotem
       DONE Should switch totem
@@ -339,6 +346,7 @@ describe("Cartographer", function () {
       DONE Should harvest winnings and update debt to that of new totem
       DONE Should spread yield if user is selecting totem for the first time
 
+
     DONE Ejected
       DONE Cannot call ejectedWithdraw when not ejected
       DONE Cannot call respread when not ejected
@@ -348,10 +356,6 @@ describe("Cartographer", function () {
       DONE   summitAmountBelongToCart should go to 0
       DONE Can be ejected through Cartographer or MCV3, each should eject the other
       DONE Can only be ejected once
-
-    DONE Enabled
-      DONE If not enabled, injectFarmYield should increment inactiveYield
-      DONE Cannot call respread when not enabled
 
     Sweep token
       Should work for ERC20 tokens
@@ -409,23 +413,6 @@ describe("Cartographer", function () {
         await this.masterChefV3.setCartographer(this.cartographer.address);
         await this.cartographer.ejectCartographer();
         await expect(this.cartographer.ejectCartographer()).to.be.revertedWith("AlreadyEjected")
-      })
-      it("should send yield to user if ejected", async function () {
-        // Ensure Cart thinks ejection is coming from MCV3 (set to admin)
-        await this.cartographerMockMCV3.transferOwnership(user2.address);
-        await this.cartographerMockMCV3.ejectCartographer();
-
-        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
-        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
-
-        const summitInCart = await this.cartographerMockMCV3.summitAmountBelongToCart()
-        expect(summitInCart).eq(0)
-
-        const userInactiveYield = (await this.cartographerMockMCV3.userInfo(user1.address)).inactiveYield
-        expect(userInactiveYield).eq(0)
-
-        const userSummit = await this.cakeToken.balanceOf(user1.address)
-        expect(userSummit).to.eq(ethers.utils.parseUnits("10"))
       })
       it("should revert respread if ejected", async function () {
         await this.masterChefV3.setCartographer(this.cartographer.address);
@@ -494,15 +481,76 @@ describe("Cartographer", function () {
     });
 
 
-    // Inject Yield
-    //   DONE should Increment summitAmountBelongToCart
-    //   DONE should Transfer summit back to user if ejected
-    //   DONE If not enabled, round locked, or user doesn't have totem, should add yield to inactive yield
-    //   Should harvest current winnings
-    //   Should spread remaining yield over round spread
+    // MCV3 Harvest
+    //   DONE Users should initially be farming the oasis
+    //   DONE Users can update farming oasis status, emitting SetUserFarmingOasis event
+    //   DONE Can update oasis tax, emitting UpdateOasisTax event, should revert if out of bounds
+    //   Tax taken if harvested in oasis
+    //   Yield sent to cartographer if harvested not in oasis
+    //   No tax taken if cartographer ejected
+    //   DONE Yield always sent to user if cartographer ejected
+
+    context.only("MCV3 Yield", async function() {
+      it("users should initially be farming the oasis", async function () {
+        const farmingElevations = await this.masterChefV3.userFarmingElevations(user1.address)
+        expect(farmingElevations).to.eq(false)
+      })
+      it("should allow users to update farming oasis status, emitting SetUserFarmingElevations event", async function() {
+        await expect(this.masterChefV3.connect(user1).setFarmingElevations(true))
+          .to.emit(this.masterChefV3, "SetUserFarmingElevations")
+          .withArgs(user1.address, true)
+
+        let farmingElevations = await this.masterChefV3.userFarmingElevations(user1.address)
+        expect(farmingElevations).to.eq(true)
+        
+        await expect(this.masterChefV3.connect(user1).setFarmingElevations(false))
+          .to.emit(this.masterChefV3, "SetUserFarmingElevations")
+          .withArgs(user1.address, false)
+
+        farmingElevations = await this.masterChefV3.userFarmingElevations(user1.address)
+        expect(farmingElevations).to.eq(false)
+      })
+      it("should only allow oasis tax update within bounds (0 to 5000), success emits SetOasisTax event", async function() {
+        await expect(this.masterChefV3.setOasisTax(5001)).to.be.revertedWith('InvalidOasisTax')
+        await expect(this.masterChefV3.setOasisTax(3000))
+          .to.emit(this.masterChefV3, "SetOasisTax")
+          .withArgs(3000)
+      })
 
 
-    context.only("Inject Yield", async function() {
+
+
+      it("should send yield to user if ejected", async function () {
+        // Ensure Cart thinks ejection is coming from MCV3 (set to admin)
+        await this.cartographerMockMCV3.transferOwnership(user2.address);
+        await this.cartographerMockMCV3.ejectCartographer();
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const summitInCart = await this.cartographerMockMCV3.summitAmountBelongToCart()
+        expect(summitInCart).eq(0)
+
+        const userInactiveYield = (await this.cartographerMockMCV3.userInfo(user1.address)).inactiveYield
+        expect(userInactiveYield).eq(0)
+
+        const userSummit = await this.cakeToken.balanceOf(user1.address)
+        expect(userSummit).to.eq(ethers.utils.parseUnits("10"))
+      })
+    })
+
+
+    context("Inject Yield", async function() {
+      it("should emit event InjectFarmYield", async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await expect(this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10")))
+          .to.emit(this.cartographerMockMCV3, "InjectFarmYield")
+          .withArgs(user1.address, ethers.utils.parseUnits('10'))
+      })
       it("should increment summitAmountBelongToCart", async function() {
         // Enable and set totem
         await this.cartographerMockMCV3.enable()
@@ -571,7 +619,64 @@ describe("Cartographer", function () {
         expect(userInfo.roundSupply).to.eq(ethers.utils.parseUnits('10').div(24))
       })
       it('should harvest current winnings', async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+        await this.cartographerMockMCV3.connect(user2).selectTotem(101)
 
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("15"))
+        await this.cartographerMockMCV3.injectFarmYield(user2.address, ethers.utils.parseUnits("15"))
+
+        // Rollover
+        const roundEndTimestamp = await this.cartographerMockMCV3.roundEndTimestamp()
+        await mineBlockWithTimestamp(roundEndTimestamp)
+        await this.cartographerMockMCV3.rollover()
+
+        const user2PendingRewardInit = await this.cartographerMockMCV3.pendingReward(user2.address);
+        expect(user2PendingRewardInit).to.be.gt(0)
+
+        // Should harvest
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("15"))
+        await expect(this.cartographerMockMCV3.injectFarmYield(user2.address, ethers.utils.parseUnits("15")))
+          .to.emit(this.cartographerMockMCV3, "HarvestedWinnings")
+          .withArgs(user2.address, user2PendingRewardInit)
+        const user2SummitFinal = await this.cakeToken.balanceOf(user2.address)
+        expect(user2SummitFinal).to.equal(user2PendingRewardInit)
+        
+        // Pending Rewards should be 0 after harvest
+        const user2PendingRewardFinal = await this.cartographerMockMCV3.pendingReward(user2.address);
+        expect(user2PendingRewardFinal).to.eq(0)
+      })
+      it('should respread remaining supply and new yield', async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        // Add spread yield
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        // Rollover a few rounds to create partially unused yield
+        for (let i = 0; i < 4; i++) {
+          const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+          await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+          await this.cartographerMockMCV3.rollover()
+        }
+
+        const unusedSupply = await this.cartographerMockMCV3.userUnusedSupply(user1.address)
+
+        // Inject yield to cause respread
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const totalToSpread = unusedSupply.add(ethers.utils.parseUnits('10'))
+
+        const userInfoFinal = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfoFinal.inactiveYield).to.eq(0)
+        expect(userInfoFinal.roundSupply).to.eq(totalToSpread.div(24))
       })
     })
 

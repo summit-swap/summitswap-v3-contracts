@@ -59,9 +59,9 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
     /// @dev TokenId is unique, and we can query the pid by tokenId.
     mapping(uint256 => UserPositionInfo) public userPositionInfos;
 
-    /// @notice userFarmingOasis[address] => bool
+    /// @notice userFarmingElevations[address] => bool
     /// @dev FarmingOasis determines whether the user wants to earn SUMMIT or EVEREST from the farms
-    mapping(address => bool) public userFarmingOasis;
+    mapping(address => bool) public userFarmingElevations;
 
     /// @notice v3PoolPid[token0][token1][fee] => pid
     mapping(address => mapping(address => mapping(uint24 => uint256))) v3PoolPid;
@@ -164,6 +164,8 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
     event NewReceiver(address receiver);
     event NewPeriodDuration(uint256 periodDuration);
     event Harvest(address indexed sender, address to, uint256 indexed pid, uint256 indexed tokenId, uint256 reward);
+    event HarvestToCartographer(uint256 amount);
+    event HarvestOasisTaxTaken(address indexed to, uint256 taxTaken);
     event NewUpkeepPeriod(
         uint256 indexed periodNumber,
         uint256 startTime,
@@ -178,8 +180,8 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
         uint256 remainingCake
     );
     event UpdateFarmBoostContract(address indexed farmBoostContract);
-    event UpdateOasisTax(uint256 oasisTax);
-    event UpdateUserFarmingOasis(address indexed user, bool farmingOasis);
+    event SetOasisTax(uint256 oasisTax);
+    event SetUserFarmingElevations(address indexed user, bool farmingElevations);
     event SetEmergency(bool emergency);
 
     modifier onlyOwnerOrOperator() {
@@ -360,11 +362,11 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
         emit SetPool(_pid, _allocPoint);
     }
 
-    /// @notice Allows user to set their oasis farming status.
-    /// @param _newFarmingOasis updated status.
-    function setFarmingOasis(bool _newFarmingOasis) external nonReentrant {
-        userFarmingOasis[msg.sender] = _newFarmingOasis;
-        emit UpdateUserFarmingOasis(msg.sender, _newFarmingOasis);
+    /// @notice Allows user to set their elevations farming status.
+    /// @param _newFarmingElevations updated status.
+    function setFarmingElevations(bool _newFarmingElevations) external nonReentrant {
+        userFarmingElevations[msg.sender] = _newFarmingElevations;
+        emit SetUserFarmingElevations(msg.sender, _newFarmingElevations);
     }
 
     struct DepositCache {
@@ -459,7 +461,7 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
         if (reward > 0) {
             if (_to != address(0)) {
                 positionInfo.reward = 0;
-                _routeReward(_to, reward, userFarmingOasis[positionInfo.user]);
+                _routeReward(_to, reward, userFarmingElevations[positionInfo.user]);
                 emit Harvest(msg.sender, _to, positionInfo.pid, _tokenId, reward);
             } else {
                 positionInfo.reward = reward;
@@ -850,10 +852,10 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
 
     /// @notice Update the oasis tax.
     /// @param _newOasisTax The new oasis tax.
-    function updateOasisTax(uint256 _newOasisTax) external onlyOwner {
-        if (oasisTax < 0 || oasisTax > 5000) revert InvalidOasisTax();
+    function setOasisTax(uint256 _newOasisTax) external onlyOwner {
+        if (_newOasisTax < 0 || _newOasisTax > 5000) revert InvalidOasisTax();
         oasisTax = _newOasisTax;
-        emit UpdateOasisTax(_newOasisTax);
+        emit SetOasisTax(_newOasisTax);
     }
 
     /**
@@ -869,20 +871,22 @@ contract MasterChefV3 is INonfungiblePositionManagerStruct, IMasterChefV3, Multi
     /// @notice Route CAKE to either user or yield gambling.
     /// @param _to The CAKE receiver address.
     /// @param _amount Transfer CAKE amounts.
-    /// @param _oasis Whether to receive CAKE directly.
-    function _routeReward(address _to, uint256 _amount, bool _oasis) internal {
+    /// @param _elevations Whether to send CAKE to elevations.
+    function _routeReward(address _to, uint256 _amount, bool _elevations) internal {
         // If no cartographer exists, harvest rewards to user without oasis tax
         if (Cartographer == address(0)) {
             _safeTransfer(_to, _amount);
             return;
         }
 
-        // TODO: Add tax, allow cake burnable
-        if (_oasis) {
-            _safeTransfer(_to, _amount);
-        } else {
+        // TODO: Implement tax, allow cake burnable
+        if (_elevations) {
             uint256 injectedAmount = _safeTransfer(Cartographer, _amount);
             ICartographer(Cartographer).injectFarmYield(_to, injectedAmount);
+            emit HarvestToCartographer(_amount);
+        } else {
+            _safeTransfer(_to, _amount);
+            emit HarvestOasisTaxTaken(_to, _amount * oasisTax / 10000);
         }
     }
 
