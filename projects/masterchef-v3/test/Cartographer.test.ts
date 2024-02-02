@@ -303,11 +303,16 @@ describe("Cartographer", function () {
     Harvest
       harvestableWinnings should be correct
       harvest should work
-
+    
     Respread (spreadYield)
-      Should accurately spread new yield + unused yield + inactive yield
-      Should set inactiveYield to 0
-      Total yield before and after should be equal (10 over 10 rounds == 5 over 20 rounds)
+      DONE Should be reverted if cart not enabled
+      DONE Should be reverted if cart ejected
+      DONE Should be reverted if called during round lockout
+      DONE Should be reverted if user doesn't have a totem selected
+      DONE Should succeed on user without position
+      DONE Should accurately spread new yield + unused yield + inactive yield
+      DONE Should set inactiveYield to 0
+      DONE Total yield before and after should be equal (10 over 10 rounds == 5 over 20 rounds)
 
     DONE Rollover
       DONE Can only call rollover when rollover available
@@ -320,18 +325,19 @@ describe("Cartographer", function () {
       DONE Rollover event emitted
       DONE Should work if multiple rounds have passed
 
-    SelectTotem
-      Should switch totem
-      Should revert if same totem
-      Should only accept valid totem
-      Should revert if round locked before rollover
-      Should move supply from prev totem to new totem if not expired
-      Should not move supply between totems if expired
-      Should move supply expiration from prev totem to new totem
-      Should not move supply expiration between totems if expired
-      Should harvest winnings and update debt to that of new totem
-      Should emit TotemSelected event
-      Should spread yield if user is selecting totem for the first time
+    DONE SelectTotem
+      DONE Should switch totem
+      DONE Should revert if same totem
+      DONE Should only accept valid totem
+      DONE Should emit TotemSelected event
+      DONE Should revert if round locked before rollover
+      DONE Should move supply from prev totem to new totem if not expired
+      DONE Should move supply expiration from prev totem to new totem
+      DONE Should not move supply between totems if expired
+      DONE Should not move supply expiration between totems if expired
+      DONE Should not update roundSupply or expirationRound when user switches totem
+      DONE Should harvest winnings and update debt to that of new totem
+      DONE Should spread yield if user is selecting totem for the first time
 
     DONE Ejected
       DONE Cannot call ejectedWithdraw when not ejected
@@ -486,6 +492,88 @@ describe("Cartographer", function () {
         await expect(this.cartographer.respread()).to.be.revertedWith("NotEnabled")
       })
     });
+
+
+    // Inject Yield
+    //   DONE should Increment summitAmountBelongToCart
+    //   DONE should Transfer summit back to user if ejected
+    //   DONE If not enabled, round locked, or user doesn't have totem, should add yield to inactive yield
+    //   Should harvest current winnings
+    //   Should spread remaining yield over round spread
+
+
+    context.only("Inject Yield", async function() {
+      it("should increment summitAmountBelongToCart", async function() {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        const summitAmountBelongToCartInit = await this.cartographerMockMCV3.summitAmountBelongToCart()
+        expect(summitAmountBelongToCartInit).to.eq(0)
+        
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const summitAmountBelongToCartFinal = await this.cartographerMockMCV3.summitAmountBelongToCart()
+        expect(summitAmountBelongToCartFinal).to.eq(ethers.utils.parseUnits('10'))
+      })
+      it('should inject into inactiveYield if cartographer not enabled', async function () {
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        let userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfo.inactiveYield).to.eq(0)
+        expect(userInfo.roundSupply).to.eq(0)
+        
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfo.inactiveYield).to.eq(ethers.utils.parseUnits('10'))
+        expect(userInfo.roundSupply).to.eq(0)
+      })
+      it('should inject into inactiveYield if user doesnt have totem selected', async function () {
+        await this.cartographerMockMCV3.enable()
+
+        let userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfo.inactiveYield).to.eq(0)
+        expect(userInfo.roundSupply).to.eq(0)
+        
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfo.inactiveYield).to.eq(ethers.utils.parseUnits('10'))
+        expect(userInfo.roundSupply).to.eq(0)
+      })
+      it('should inject into inactiveYield if round lockout active', async function () {
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        let userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfo.inactiveYield).to.eq(0)
+        expect(userInfo.roundSupply).to.eq(0)
+        
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfo.inactiveYield).to.eq(0)
+        expect(userInfo.roundSupply).to.eq(ethers.utils.parseUnits('10').div(24))
+
+        const roundEndTimestamp = await this.cartographerMockMCV3.roundEndTimestamp()
+        await mineBlockWithTimestamp(roundEndTimestamp)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfo.inactiveYield).to.eq(ethers.utils.parseUnits('10'))
+        expect(userInfo.roundSupply).to.eq(ethers.utils.parseUnits('10').div(24))
+      })
+      it('should harvest current winnings', async function () {
+
+      })
+    })
 
     context("Rollover", function () {
       it("should revert if cartographer not enabled", async function () {
@@ -800,21 +888,76 @@ describe("Cartographer", function () {
     });
 
 
-    // SelectTotem
-    //   DONE Should switch totem
-    //   DONE Should revert if same totem
-    //   DONE Should only accept valid totem
-    //   DONE Should emit TotemSelected event
-    //   DONE Should revert if round locked before rollover
-    //   DONE Should move supply from prev totem to new totem if not expired
-    //   DONE Should move supply expiration from prev totem to new totem
-    //   DONE Should not move supply between totems if expired
-    //   DONE Should not move supply expiration between totems if expired
-    //   Should harvest winnings and update debt to that of new totem
-    //   Should spread yield if user is selecting totem for the first time
+    context("Respread (spreadYield)", function() {
+      it('should be reverted if called before cartographer enabled', async function () {
+        await expect(this.cartographerMockMCV3.connect(user1).respread()).to.be.revertedWith('NotEnabled')
+      })
+      it('should be reverted if called after cartographer ejected', async function () {
+        await this.masterChefV3.setCartographer(this.cartographer.address);
+        await this.cartographer.enable()
+        await this.cartographer.ejectCartographer();
+        await expect(this.cartographer.connect(user1).respread()).to.be.revertedWith('Ejected')
+      })
+      it('should be reverted if called during round lockout', async function () {
+        await this.cartographerMockMCV3.enable()
+        const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+        await expect(this.cartographerMockMCV3.connect(user1).respread()).to.be.revertedWith('RoundLocked')
+      })
+      it('should be reverted if user doesnt have a totem selected', async function () {
+        await this.cartographerMockMCV3.enable()
+        await expect(this.cartographerMockMCV3.connect(user1).respread()).to.be.revertedWith('InvalidTotem')
+      })
+      it('should succeed and emit event if user doesnt have a position', async function () {
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+        await expect(this.cartographerMockMCV3.connect(user1).respread())
+          .to.emit(this.cartographerMockMCV3, "Respread")
+          .withArgs(user1.address)
+      })
+      it('should accurately spread new yield + unused yield + inactive yield', async function () {
+        // Enable and set totem
+        await this.cartographerMockMCV3.enable()
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+
+        // Add spread yield
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        // Rollover a few rounds to create partially unused yield
+        for (let i = 0; i < 4; i++) {
+          const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+          await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+          await this.cartographerMockMCV3.rollover()
+        }
+
+        // Inject yield during round lockout to add inactive yield
+        const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+        await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        // Execute rollover
+        await this.cartographerMockMCV3.rollover()
+
+        const unusedSupply = await this.cartographerMockMCV3.userUnusedSupply(user1.address)
+        const userInfoInit = await this.cartographerMockMCV3.userInfo(user1.address)
+        const {inactiveYield} = userInfoInit
+
+        // Inject yield to cause respread
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        const totalToSpread = unusedSupply.add(inactiveYield).add(ethers.utils.parseUnits('10'))
+
+        const userInfoFinal = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(userInfoFinal.inactiveYield).to.eq(0)
+        expect(userInfoFinal.roundSupply).to.eq(totalToSpread.div(24))
+      })
+    })
 
 
-    context.only("Switch totem", function () {
+    context("Switch totem", function () {
       it("should switch totem correctly", async function() {
         // Enable and set totem
         await this.cartographerMockMCV3.enable()
@@ -951,7 +1094,135 @@ describe("Cartographer", function () {
         expect(totem101SupplyExpirationInit).to.eq(0)
         expect(totem101SupplyExpirationFinal).to.eq(0)
       })
-      
+      it("should not update roundSupply or expirationRound when user switches totem", async function() {
+        await this.cartographerMockMCV3.enable();
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+        await this.cartographerMockMCV3.connect(user2).selectTotem(101)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("15"))
+        await this.cartographerMockMCV3.injectFarmYield(user2.address, ethers.utils.parseUnits("15"))
+
+        let userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        const expirationRoundInit = userInfo.expirationRound
+        const roundSupplyInit = userInfo.roundSupply
+
+        // Rollover a few rounds
+        for (let i = 0; i < 4; i++) {
+          // Rollover
+          const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+          await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+          await this.cartographerMockMCV3.rollover()
+        }
+
+        // Move User1 from totem 100 to 101
+        await this.cartographerMockMCV3.connect(user1).selectTotem(101)
+
+        userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        const expirationRoundFinal = userInfo.expirationRound
+        const roundSupplyFinal = userInfo.roundSupply
+
+        expect(expirationRoundFinal).to.eq(expirationRoundInit)
+        expect(roundSupplyFinal).to.eq(roundSupplyInit)
+      })
+      it("should harvest winnings and update debt to that of new totem", async function () {
+        await this.cartographerMockMCV3.enable();
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+        await this.cartographerMockMCV3.connect(user2).selectTotem(101)
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("15"))
+        await this.cartographerMockMCV3.injectFarmYield(user2.address, ethers.utils.parseUnits("15"))
+
+        // Rollover a few rounds
+        for (let i = 0; i < 4; i++) {
+          // Rollover
+          const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+          await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+          await this.cartographerMockMCV3.rollover()
+        }
+
+        const roundNumber = await this.cartographerMockMCV3.roundNumber()
+        const totem100Mult = await this.cartographerMockMCV3.totemRoundMult(100, roundNumber - 1)
+        const totem101Mult = await this.cartographerMockMCV3.totemRoundMult(101, roundNumber - 1)
+
+        // Move User1 from totem 100 to 101
+        await this.cartographerMockMCV3.connect(user1).selectTotem(101)
+
+        // Validate User1 debt
+        const user1Info = await this.cartographerMockMCV3.userInfo(user1.address)
+        expect(user1Info.debt).to.eq(totem101Mult)
+
+        // Validate User1 no pending rewards after harvest
+        const user1PendingRewardFinal = await this.cartographerMockMCV3.pendingReward(user1.address)
+        expect(user1PendingRewardFinal).to.eq(0)
+
+        // Move User2 from totem 101 to 100
+        const user2PendingReward = await this.cartographerMockMCV3.pendingReward(user2.address)
+        const user2SummitInit = await this.cakeToken.balanceOf(user2.address)
+        
+        // Validate HarvestWinnings event emitted
+        await expect(this.cartographerMockMCV3.connect(user2).selectTotem(100))
+          .to.emit(this.cartographerMockMCV3, "HarvestedWinnings")
+          .withArgs(user2.address, user2PendingReward)
+
+        // Validate winnings harvested
+        const user2SummitFinal = await this.cakeToken.balanceOf(user2.address)
+        expect(user2SummitFinal.sub(user2SummitInit)).to.eq(user2PendingReward)
+
+        // Validate User2 debt
+        const user2Info = await this.cartographerMockMCV3.userInfo(user2.address)
+        expect(user2Info.debt).to.eq(totem100Mult)
+
+        // Validate User2 no pending rewards after harvest
+        const user2PendingRewardFinal = await this.cartographerMockMCV3.pendingReward(user2.address)
+        expect(user2PendingRewardFinal).to.eq(0)
+      })
+      it('should spread yield if user is selecting totem for the first time', async function() {
+        await this.cartographerMockMCV3.enable();
+
+        await this.cakeToken.transfer(this.cartographerMockMCV3.address, ethers.utils.parseUnits("10"))
+        await this.cartographerMockMCV3.injectFarmYield(user1.address, ethers.utils.parseUnits("10"))
+
+        // Rollover a few rounds
+        for (let i = 0; i < 4; i++) {
+          // Rollover
+          const roundEndTimestamp = parseInt(await this.cartographerMockMCV3.roundEndTimestamp(), 10)
+          await mineBlockWithTimestamp(roundEndTimestamp + twoHrs)
+          await this.cartographerMockMCV3.rollover()
+        }
+        const roundNumber = parseInt(await this.cartographerMockMCV3.roundNumber(), 10)
+        
+        let userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        const totemInit = userInfo.totem
+        const expirationRoundInit = userInfo.expirationRound
+        const roundSupplyInit = userInfo.roundSupply
+        const inactiveYieldInit = userInfo.inactiveYield
+        const totem100SupplyInit = await this.cartographerMockMCV3.totemSupply(100)
+
+        expect(totemInit).to.eq(0)
+        expect(expirationRoundInit).to.eq(0)
+        expect(roundSupplyInit).to.eq(0)
+        expect(inactiveYieldInit).to.eq(ethers.utils.parseUnits('10'))
+        expect(totem100SupplyInit).to.eq(0)
+        
+        await this.cartographerMockMCV3.connect(user1).selectTotem(100)
+        
+        userInfo = await this.cartographerMockMCV3.userInfo(user1.address)
+        const totemFinal = userInfo.totem
+        const expirationRoundFinal = userInfo.expirationRound
+        const roundSupplyFinal = userInfo.roundSupply
+        const inactiveYieldFinal = userInfo.inactiveYield
+        const totem100SupplyFinal = await this.cartographerMockMCV3.totemSupply(100)
+
+        expect(totemFinal).to.eq(100)
+        expect(expirationRoundFinal).to.eq(roundNumber + 24 - 1)
+        expect(roundSupplyFinal).to.eq(ethers.utils.parseUnits('10').div(24))
+        expect(inactiveYieldFinal).to.eq(0)
+        expect(totem100SupplyFinal).to.eq(ethers.utils.parseUnits('10').div(24))
+      })
 
 
 

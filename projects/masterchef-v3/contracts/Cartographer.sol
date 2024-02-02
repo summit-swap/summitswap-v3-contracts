@@ -95,6 +95,8 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     event SetExpeditionRunwayRounds(uint256 _runwayRounds);
 
     event EnableCartographer();
+    event HarvestedWinnings(address indexed user, uint256 winnings);
+    event Respread(address indexed user);
     
 
 
@@ -167,8 +169,11 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         _;
     }
 
+    function _getIsValidTotem(uint8 _totem) internal pure returns (bool) {
+        return (_totem >= 100 && _totem <= 101) || (_totem >= 200 && _totem <= 204);
+    }
     modifier validTotem(uint8 _totem) {
-        if (!((_totem >= 100 && _totem <= 101) || (_totem >= 200 && _totem <= 204))) revert InvalidTotem();
+        if (!_getIsValidTotem(_totem)) revert InvalidTotem();
         _;
     }
 
@@ -278,6 +283,8 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
             user.lifetimeWinnings += winnings;
             _safeTransferSUMMIT(user.user, winnings);
         }
+
+        emit HarvestedWinnings(user.user, winnings);
     }
 
     function harvestWinnings() public nonReentrant {
@@ -323,12 +330,14 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         }
 
         // If user is selecting totem for first time, and has inactive yield, spread it
-        if (user.totem == 0 && user.inactiveYield > 0) {
-            _spreadYield(user, 0);
-        }
+        bool shouldSpread = user.totem == 0 && user.inactiveYield > 0;
 
         // Update user's totem
         user.totem = _totem;
+
+        if (shouldSpread) {
+            _spreadYield(user, 0);
+        }
 
         // Update debt to mult at end of previous round
         user.debt = totemRoundMult[user.totem][roundNumber - 1];
@@ -359,13 +368,16 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
     }
 
 
-    function respread() public nonReentrant roundNotLocked isEnabled notEjected {
+    function respread() public nonReentrant isEnabled notEjected roundNotLocked {
         UserYieldInfo storage user = _getUserInfo(msg.sender);
         _harvestWinnings(user);
         _spreadYield(user, 0);
+        emit Respread(user.user);
     }
 
     function _spreadYield(UserYieldInfo storage user, uint256 _yield) internal {
+        if (!_getIsValidTotem(user.totem)) revert InvalidTotem();
+
         uint256 unusedSupply = _userUnusedSupply(user.user);
 
         // If user has some unplayed yield (if they are on round 5/24 on their yield spread),
@@ -393,8 +405,8 @@ contract Cartographer is Ownable, ReentrancyGuard, ICartographer {
         public
         nonReentrant
         isEnabled
-        rolloverAvailable
         notEjected
+        rolloverAvailable
     {
         // TODO: get winning totem
         uint8 winningPlainsTotem = 101;
